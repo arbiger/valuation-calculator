@@ -114,6 +114,53 @@ def get_fcf_data(ticker):
         return {'error': str(e)}
 
 
+def get_risk_free_rate():
+    """獲取 10 年期公債利率 (無風險利率)"""
+    try:
+        treasury = yf.Ticker('^TNX')
+        info = treasury.info
+        # priceHint is the yield in percentage, divide by 100 for decimal
+        rf = info.get('regularMarketPrice', 0) / 100 if info.get('regularMarketPrice') else 0.045
+        return rf
+    except:
+        return 0.045  # Default to 4.5% if unavailable
+
+
+def calculate_wacc_auto(ticker):
+    """自動計算 WACC (CAPM 模型)"""
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        # Get beta
+        beta = info.get('beta', 1.0)
+        if beta is None or beta <= 0:
+            beta = 1.0
+        
+        # Get risk-free rate (10-year Treasury)
+        rf = get_risk_free_rate()
+        
+        # Market risk premium (historical average ~5.5%)
+        market_risk_premium = 0.055
+        
+        # Cost of Equity (CAPM) = Rf + Beta × (Rm - Rf)
+        cost_of_equity = rf + beta * market_risk_premium
+        
+        # For simplicity, assume WACC ≈ Cost of Equity (for all-equity firm)
+        # More complex version would include debt cost
+        wacc = cost_of_equity
+        
+        return {
+            'wacc': wacc,
+            'beta': beta,
+            'risk_free': rf,
+            'market_risk_premium': market_risk_premium,
+            'cost_of_equity': cost_of_equity
+        }
+    except Exception as e:
+        return {'wacc': 0.10, 'error': str(e)}  # Default to 10%
+
+
 def calculate_dcf(ticker, wacc=0.10, growth_rate=0.05, terminal_growth=0.025, years=10):
     """計算 DCF 估值"""
     fcf_data = get_fcf_data(ticker)
@@ -309,6 +356,7 @@ def main():
         print("  value peg <ticker>                - 僅 PEG")
         print("  value ev <ticker>                 - 僅 EV/EBITDA + Rule of 40")
         print("  value dcf <ticker>               - DCF 估值 (預設參數)")
+        print("  value dcf <ticker> --auto        - DCF 估值 (自動計算 WACC)")
         print("  value dcf <ticker> --wacc=0.10   - 自訂 WACC")
         print("  value dcf <ticker> --growth=0.15 - 自訂成長率")
         print("  value                             - 所有持股估值")
@@ -379,9 +427,12 @@ def main():
                 wacc = 0.10  # Default 10%
                 growth = 0.05  # Default 5%
                 terminal = 0.025  # Default 2.5%
+                auto_wacc = False
                 
                 for arg in args[3:]:
-                    if arg.startswith('--wacc='):
+                    if arg == '--auto':
+                        auto_wacc = True
+                    elif arg.startswith('--wacc='):
                         try:
                             wacc = float(arg.split('=')[1])
                         except:
@@ -396,6 +447,19 @@ def main():
                             terminal = float(arg.split('=')[1])
                         except:
                             pass
+                
+                # Auto WACC calculation
+                if auto_wacc:
+                    wacc_data = calculate_wacc_auto(ticker)
+                    wacc = wacc_data.get('wacc', 0.10)
+                    print(f"### ⚡ 自動 WACC")
+                    print(f"| 參數 | 數值 |")
+                    print(f"|------|------|")
+                    print(f"| Beta | {wacc_data.get('beta', 'N/A')} |")
+                    print(f"| 無風險利率 | {wacc_data.get('risk_free', 0)*100:.2f}% |")
+                    print(f"| 市場風險溢價 | {wacc_data.get('market_risk_premium', 0)*100:.1f}% |")
+                    print(f"| **計算 WACC** | **{wacc*100:.2f}%** |")
+                    print()
                 
                 dcf_result = calculate_dcf(ticker, wacc=wacc, growth_rate=growth, terminal_growth=terminal)
                 print(format_dcf(dcf_result))
